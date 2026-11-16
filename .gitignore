@@ -1,0 +1,5 @@
+tools/sim/game_sim.js
+tools/sim/smoke_all.js
+tools/sim/results/
+__pycache__/
+.DS_Store

@@ -1,0 +1,76 @@
+<title>Solarpunk Game Project</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Nunito:wght@400;600;700;800&display=swap">
+<style>
+/* Layout: a project hub. Short header with status, then one card per artifact in a grid, then a short status list. */
+:root {
+  --bg: #e9f0ea; --surface: #fbfcf7; --fg: #20302a; --muted: #5a6c63; --line: #cfdcd2; --accent: #3f8f5a; --sun: #e2a136;
+  --display: "Young Serif", Georgia, serif; --body: "Nunito", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #121a15; --surface: #1a251f; --fg: #e3ece5; --muted: #9fb2a5; --line: #2d3d33; --accent: #72c993; --sun: #f0b85a; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #121a15; --surface: #1a251f; --fg: #e3ece5; --muted: #9fb2a5; --line: #2d3d33; --accent: #72c993; --sun: #f0b85a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.55; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 40px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 28px; }
+header { display: flex; flex-direction: column; gap: 8px; max-width: 68ch; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 800; margin: 0; }
+h1 { font-family: var(--display); font-weight: 400; font-size: clamp(32px, 5vw, 48px); line-height: 1.08; margin: 0; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+a.card { display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; color: inherit; text-decoration: none; min-width: 0; transition: border-color .15s, transform .15s; }
+a.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+a.card:focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
+.kind { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.card h2 { font-family: var(--display); font-weight: 400; font-size: 24px; margin: 0; line-height: 1.15; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.card ul { margin: 0; padding-left: 18px; font-size: 14.5px; display: flex; flex-direction: column; gap: 3px; }
+.open { margin-top: auto; font-weight: 800; color: var(--accent); }
+.status { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+.status h2 { font-family: var(--display); font-weight: 400; font-size: 22px; margin: 0; }
+.status dl { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 16px; font-size: 15px; }
+.status dt { font-weight: 800; color: var(--muted); }
+.status dd { margin: 0; min-width: 0; }
+@media (max-width: 480px) { .status dl { grid-template-columns: 1fr; gap: 2px; } .status dd { margin-bottom: 8px; } }
+@media (prefers-reduced-motion: reduce) { a.card { transition: none; } a.card:hover { transform: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Untitled multiplayer solarpunk game</p>
+    <h1>Project hub</h1>
+    <p>Everything for the game in one place: the design log with every decision, the playable prototype, and the art direction. Updated 16 November 2026.</p>
+  </header>
+
+  <section class="grid" aria-label="Project artifacts">
+    <a class="card" href="https://claude.ai/artifact/V2tSHj7XhE1Xf6DX6thEWJ" target="_blank" rel="noopener">
+      <span class="kind">Document · start here</span>
+      <h2>Design log</h2>
+      <p>The record of every decision and finding, kept up to date as we talk.</p>
+      <ul><li>Decision log, newest first</li><li>Gameplay design draft and build plan</li><li>Solarpunk research and high concepts</li><li>Playtest feedback, success framework, balance simulations</li></ul>
+      <span class="open">Open the design log</span>
+    </a>
+    <a class="card" href="https://claude.ai/artifact/NRyh2sdGx7oYueEM6GNCWr" target="_blank" rel="noopener">
+      <span class="kind">Playable prototype · v0.4</span>
+      <h2>Solarpunk Valley</h2>
+      <p>One settlement against five computer players over 12 seasons, about 6 minutes of play.</p>
+      <ul><li>Planning phase each season: vote, research, build</li><li>Settlers, needs and the Doughnut shared goal</li><li>Crises, mutual aid and the Skysail</li><li>Rebalanced from about 1,700 simulated sessions</li></ul>
+      <span class="open">Play the prototype</span>
+    </a>
+    <a class="card" href="https://claude.ai/artifact/4QLCEjZXASaQig3Gm64MtQ" target="_blank" rel="noopener">
+      <span class="kind">Art direction</span>
+      <h2>Aesthetic directions</h2>
+      <p>The painted isometric mock-up and four style directions to mix per setting.</p>
+      <ul><li>Painted valley mock-up, Ghibli-like</li><li>Clean Bright Utopia, Earth &amp; Pattern, Retrofit Rebirth, Art Nouveau Green</li><li>References: Dear Alice and the Cole Hastings video</li></ul>
+      <span class="open">See the art direction</span>
+    </a>
+  </section>
+
+  <section class="status">
+    <h2>Where things stand</h2>
+    <dl>
+      <dt>Core idea</dt><dd>Competitive coexistence: players compete for Standing but share one goal, restoring the valley. If it fails, everyone fails.</dd>
+      <dt>Look</dt><dd>Isometric map, hand-painted Ghibli-like style, a different aesthetic per setting.</dd>
+      <dt>Now</dt><dd>You are reading the proposed design pillars. Prototype v0.4 is ready to play.</dd>
+      <dt>Next</dt><dd>Fix green play winning the top rank too often, make needs matter, then real multiplayer.</dd>
+    </dl>
+  </section>
+</div>

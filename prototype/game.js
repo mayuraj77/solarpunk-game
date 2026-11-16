@@ -1,0 +1,1097 @@
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+
+/* ================= data ================= */
+const N = 16, TW = 60, TH = 30, OX = 500, OY = 92, CLIFF = 34, ZH = 9;
+const TICKS_PER_SEASON = 30, SEASONS = 12, END_TICK = TICKS_PER_SEASON * SEASONS;
+const PROJECT_PARTS = 30, HEALTH_TARGET = 70, FLOOR_TARGET = .75;
+const BUILDS_PER_SEASON = 3, START_SETTLERS = 6, HALL = [7, 7];
+const NEEDS = { food: 4, water: 2, energy: 3 }; // per settler per season
+const TUNE = { pressure: 2.1, healCredit: 20, crisisBase: .3, crisisPerSeason: .05 };
+const SEASON_NAMES = ["Spring", "Summer", "Autumn", "Winter"];
+const SEASONMOD = { Spring: { sun: 1, wind: 1, crop: 1.1, water: 1.1 }, Summer: { sun: 1.3, wind: .7, crop: 1.2, water: .8 }, Autumn: { sun: .8, wind: 1.2, crop: 1, water: 1 }, Winter: { sun: .5, wind: 1.3, crop: .4, water: .9 } };
+const WEATHERS = { Clear: { sun: 1.2 }, Cloudy: { sun: .6 }, Windy: { wind: 1.4 }, Still: { wind: .4 }, Rainy: { sun: .7, water: 1.3, crop: 1.1 } };
+const RULES = {
+  quotaLow:      { n: "Careful commons", d: "Each player may take only 8 from the commons this season.", likes: ["green"] },
+  quotaHigh:     { n: "Open commons", d: "Each player may take up to 25 from the commons this season.", likes: ["greedy", "balanced"] },
+  extractionCap: { n: "Extraction cap", d: "Mines make 25% less and put 50% less pressure on the valley.", likes: ["green"] },
+  levy:          { n: "Rewilding levy", d: "Everyone pays up to 3 Restoration Credits now, and the valley heals by 4.", likes: ["green", "balanced"] },
+  festival:      { n: "Harvest festival", d: "Everyone's needs are 20% lower this season.", likes: ["greedy", "balanced"] },
+  toolshare:     { n: "Shared tool libraries", d: "All buildings cost 20% less this season.", likes: ["greedy", "balanced"] },
+  aidPact:       { n: "Mutual aid pact", d: "Gifts count double toward the shared goal this season.", likes: ["green"] }
+};
+const CRISES = {
+  drought:  { n: "Drought", d: "Farms, water works and water wheels make 75% less" },
+  storm:    { n: "Storm", d: "Two buildings are damaged and stop working" },
+  heatwave: { n: "Heatwave", d: "The whole valley loses 2 health and everyone needs 30% more energy this season" }
+};
+
+const RES = {
+  crops: ["Crops", 0], timber: ["Timber", 0], ore: ["Ore", 0], fish: ["Fish", 0], water: ["Water", 0], energy: ["Energy", 0], knowledge: ["Knowledge", 0],
+  alloy: ["Alloy", 1], meals: ["Meals", 1], bio: ["Biocomposite", 1],
+  glass: ["Solar glass", 2], chips: ["Chips", 2], seeds: ["Seed stock", 2],
+  parts: ["Skysail parts", 3]
+};
+const ORDER = Object.keys(RES);
+const TIER = k => RES[k][1];
+const VAL = [1, 3, 8, 25];
+const RN = k => RES[k][0];
+
+const TER = {
+  ocean: { n: "Ocean", c: "#3f7fae" }, lake: { n: "Lake", c: "#4f9fc0" }, field: { n: "Fields", c: "#cdbf68" },
+  meadow: { n: "Meadow", c: "#86bd5e" }, forest: { n: "Forest", c: "#5b9549" }, hill: { n: "Hills", c: "#a3bb6c" }, mountain: { n: "Mountains", c: "#a39a89" }
+};
+const LAND = ["meadow", "field", "hill"];
+
+const B = {
+  farm:       { n: "Farm", on: ["field"], cost: { timber: 5 }, out: { crops: 3 }, p: .001, br: "living", wx: "crop", crew: 1 },
+  forestry:   { n: "Forestry", on: ["forest"], cost: { crops: 5 }, out: { timber: 2 }, p: .002, br: "living", crew: 1 },
+  mine:       { n: "Mine", on: ["mountain", "hill"], cost: { timber: 8 }, out: { ore: 2 }, p: .006, br: "circular", crew: 1 },
+  fishery:    { n: "Fishery", on: ["lake", "ocean"], cost: { timber: 6 }, out: { fish: 2 }, p: .003, br: "living", crew: 1 },
+  waterworks: { n: "Water works", on: ["lake"], cost: { timber: 6 }, out: { water: 3 }, p: .0005, br: "living", crew: 1 },
+  waterwheel: { n: "Water wheel", on: ["lake"], cost: { timber: 6 }, out: { energy: 2 }, p: 0, br: "solar", wx: "water", crew: 0 },
+  pedal:      { n: "Pedal power shed", on: LAND, cost: { timber: 4 }, out: { energy: 2 }, p: 0, br: null, wx: "muscle", crew: 1 },
+  solar:      { n: "Solar array", on: LAND, cost: { ore: 4, timber: 4 }, out: { energy: 3 }, p: 0, br: "solar", wx: "sun", crew: 0 },
+  wind:       { n: "Wind turbine", on: ["hill", "mountain"], cost: { alloy: 4 }, out: { energy: 6 }, p: 0, br: "solar", tech: "wind", wx: "wind", crew: 0 },
+  library:    { n: "Library", on: LAND, cost: { timber: 10, crops: 10 }, out: { knowledge: 1 }, p: 0, br: null, crew: 1 },
+  alloyworks: { n: "Alloy works", on: LAND, cost: { timber: 10, ore: 5 }, inp: { ore: 2, energy: 2 }, out: { alloy: 1 }, p: .003, br: "circular", crew: 2 },
+  kitchen:    { n: "Kitchen co-op", on: LAND, cost: { timber: 8 }, inp: { crops: 2, fish: 1 }, out: { meals: 2 }, p: 0, br: "living", crew: 2 },
+  bioworks:   { n: "Bio workshop", on: LAND, cost: { timber: 8 }, inp: { timber: 2, water: 1 }, out: { bio: 1 }, p: 0, br: "circular", crew: 1 },
+  glassworks: { n: "Glassworks", on: LAND, cost: { bio: 6 }, inp: { alloy: 1, energy: 3 }, out: { glass: 1 }, p: .001, br: "solar", tech: "glass", crew: 2 },
+  chipfab:    { n: "Chip fab", on: LAND, cost: { bio: 10, alloy: 6 }, inp: { alloy: 2, energy: 3, knowledge: 1 }, out: { chips: 1 }, p: .003, br: "circular", tech: "chips", crew: 2 },
+  seedbank:   { n: "Seed bank", on: LAND, cost: { bio: 6 }, inp: { meals: 2, water: 2 }, out: { seeds: 1 }, p: 0, br: "living", tech: "seeds", crew: 1 },
+  rewild:     { n: "Rewilding station", on: LAND.concat(["forest"]), cost: { bio: 8, seeds: 2 }, p: 0, br: "living", tech: "rewild", crew: 1, note: "Heals the valley and earns Restoration Credits. Uses 1 seed stock every 10 ticks" },
+  workshop:   { n: "Skysail workshop", on: LAND, cost: { bio: 12, alloy: 8 }, p: .001, br: null, techAny: ["sky", "myco", "zerowaste"], crew: 2, note: "Every 3 ticks turns 2 different advanced goods into 1 Skysail part" }
+};
+
+const TECH = {
+  glass:     { n: "Solar glass", br: "solar", tier: 1, cost: { knowledge: 15, alloy: 10 }, d: "Unlocks Glassworks." },
+  wind:      { n: "Wind lattice", br: "solar", tier: 2, req: "glass", cost: { knowledge: 25, glass: 6 }, d: "Unlocks Wind turbines on hills and mountains (6 energy, no settlers)." },
+  sky:       { n: "Sky gardens", br: "solar", tier: 3, req: "wind", cost: { knowledge: 40, glass: 10 }, d: "Unlocks the Skysail workshop. Heals the valley a little every tick." },
+  seeds:     { n: "Seed banks", br: "living", tier: 1, cost: { knowledge: 15, meals: 15 }, d: "Unlocks Seed banks." },
+  rewild:    { n: "Rewilding", br: "living", tier: 2, req: "seeds", cost: { knowledge: 25, seeds: 6 }, d: "Unlocks Rewilding stations, which heal the valley." },
+  myco:      { n: "Mycelium materials", br: "living", tier: 3, req: "rewild", cost: { knowledge: 40, seeds: 10 }, d: "Unlocks the Skysail workshop. Your farms and forestry put 50% less pressure on the valley." },
+  recycle:   { n: "Alloy recycling", br: "circular", tier: 1, cost: { knowledge: 15, alloy: 10 }, d: "Your mines and alloy works put 40% less pressure on the valley." },
+  chips:     { n: "Chip fab", br: "circular", tier: 2, req: "recycle", cost: { knowledge: 25, alloy: 15 }, d: "Unlocks Chip fabs." },
+  zerowaste: { n: "Zero-waste refineries", br: "circular", tier: 3, req: "chips", cost: { knowledge: 40, chips: 6 }, d: "Unlocks the Skysail workshop. Your refineries make 25% more." }
+};
+const BRANCHES = { solar: "Solar & Sky", living: "Living Systems", circular: "Circular Industry" };
+
+const GOALS = {
+  feeder:    { n: "Feeder", d: "Give 120 meals to the commons", target: 120, key: "mealsGiven" },
+  light:     { n: "Lightbringer", d: "Generate 4,000 energy", target: 4000, key: "energyMade" },
+  maker:     { n: "Maker", d: "Produce 25 chips", target: 25, key: "chipsMade" },
+  gardener:  { n: "Gardener", d: "Build 2 rewilding stations", target: 2, key: "rewilds" },
+  connector: { n: "Connector", d: "Complete 12 trades, gifts or aid", target: 12, key: "deals" }
+};
+const PEOPLE = [["You", "#e2603f"], ["Ana", "#3f86b0"], ["Bram", "#8a63c9"], ["Chidi", "#c99117"], ["Dara", "#2f9e8a"], ["Emi", "#c2507e"]];
+const STYLES = [null, "green", "greedy", "balanced", "green", "balanced"];
+const HOMES = [[3, 3], [3, 9], [5, 13], [10, 2], [11, 8], [13, 4]];
+
+const ICON = {
+  crops: '<path d="M8 15V5M8 6C6 5 5 3 5 2c2 0 3 2 3 4zm0 0c2-1 3-3 3-4-2 0-3 2-3 4zm0 4C6 9 5 7 5 6c2 0 3 2 3 4zm0 0c2-1 3-3 3-4-2 0-3 2-3 4z" fill="#d6b64a" stroke="#8a6d1f" stroke-width=".8"/>',
+  timber: '<rect x="1.5" y="6" width="11" height="5" rx="2.5" fill="#9a6a42"/><circle cx="12.5" cy="8.5" r="2.5" fill="#d9b48a" stroke="#7a5236" stroke-width=".8"/>',
+  ore: '<path d="M2 13l2-6 4-3 5 3 1 6z" fill="#8d8679"/><path d="M6 8l3-1 2 3" stroke="#e2b440" stroke-width="1.3" fill="none"/>',
+  fish: '<path d="M1.5 8c3-4 7-4 10 0-3 4-7 4-10 0zm10 0l3-3v6z" fill="#4f9fc0"/><circle cx="4.5" cy="7.5" r=".9" fill="#fff"/>',
+  water: '<path d="M8 1.5c3 4 5 6.5 5 9a5 5 0 0 1-10 0c0-2.5 2-5 5-9z" fill="#3f86b0"/><path d="M6 10a2 2 0 0 0 2 2" stroke="#cfe8f3" fill="none"/>',
+  energy: '<path d="M9.5 1L3 9.5h4.5L6 15l7-8.5H8.5z" fill="#e2a136"/>',
+  knowledge: '<path d="M1.5 3H7c1 0 1 1 1 1v10s0-1-1-1H1.5zM14.5 3H9c-1 0-1 1-1 1v10s0-1 1-1h5.5z" fill="#3f7a63"/>',
+  alloy: '<path d="M1.5 12l2-6h9l2 6z" fill="#aab3b4" stroke="#6b7477" stroke-width=".8"/>',
+  meals: '<path d="M1.5 8h13a6.5 5 0 0 1-13 0z" fill="#e07a3f"/><path d="M5.5 6c0-2 2-2 2-4M9 6c0-2 2-2 2-4" stroke="#b9a99a" fill="none"/>',
+  bio: '<rect x="2.5" y="5" width="11" height="9" rx="1.5" fill="#b98a5a"/><path d="M6 10c0-3 3-5 6-5 0 3-2 6-6 5z" fill="#6aa64c"/>',
+  glass: '<rect x="3" y="1.5" width="10" height="13" rx="1" fill="#a9d8e6" stroke="#5c8fb5"/><path d="M5 10l5-5" stroke="#fff" stroke-width="1.5"/>',
+  chips: '<rect x="4" y="4" width="8" height="8" rx="1" fill="#2a7f78"/><path d="M6 1.5v2.5M10 1.5v2.5M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5" stroke="#2a7f78" stroke-width="1.2"/>',
+  seeds: '<ellipse cx="6" cy="9.5" rx="2.6" ry="3.6" fill="#9a6a42"/><ellipse cx="10.5" cy="7" rx="2.6" ry="3.6" fill="#c9a646"/>',
+  parts: '<circle cx="8" cy="8" r="4.6" fill="none" stroke="#3f86b0" stroke-width="3" stroke-dasharray="2.2 1.4"/><circle cx="8" cy="8" r="2" fill="#3f86b0"/>',
+  credits: '<circle cx="8" cy="8" r="6.5" fill="#3f8f5a"/><path d="M8 12c-2.5 0-3.5-2.5-2.3-4.6C6.9 5.4 10.5 5 10.5 5s.3 7-2.5 7z" fill="#cdeccf"/>',
+  settlers: '<circle cx="8" cy="4.8" r="2.8" fill="#e2603f"/><path d="M2.5 14.5c0-3.2 2.4-5.5 5.5-5.5s5.5 2.3 5.5 5.5z" fill="#e2603f"/>'
+};
+const icon = k => `<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">${ICON[k] || ""}</svg>`;
+
+/* ================= profile (persistent specializations) ================= */
+const PKEY = "solarpunk-proto-profile";
+function loadProfile(){
+  try { const p = JSON.parse(localStorage.getItem(PKEY)); if (p && p.xp) return p; } catch (e) {}
+  return { xp: { solar: 0, living: 0, circular: 0 }, sessions: 0 };
+}
+function saveProfile(p){ try { localStorage.setItem(PKEY, JSON.stringify(p)); } catch (e) {} }
+const lvlOf = xp => Math.min(10, Math.floor(Math.sqrt(xp / 30)));
+let profile = loadProfile();
+
+/* ================= state ================= */
+let R, map, players, tick, health, parts, commons, firstBy, logs, ended, speed, started, selected, hover, tab = "build";
+let weather, council, activeRule, crisis, healthHist, phase, banners, bannerId, buildSeq;
+let shareGood = "crops", shareAmt = 10;
+
+function rng(s){ s = s % 2147483646 + 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+function noiseGen(){
+  const G = 6, g = [];
+  for (let i = 0; i <= G; i++){ g[i] = []; for (let j = 0; j <= G; j++) g[i][j] = R(); }
+  const s = t => t * t * (3 - 2 * t);
+  return (x, y) => {
+    const fx = x / N * (G - 1), fy = y / N * (G - 1), i = Math.floor(fx), j = Math.floor(fy), tx = s(fx - i), ty = s(fy - j);
+    const a = g[i][j], b = g[i + 1][j], c = g[i][j + 1], d = g[i + 1][j + 1];
+    return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+  };
+}
+const tileAt = (x, y) => (x >= 0 && y >= 0 && x < N && y < N) ? map[y][x] : null;
+
+function elevFor(t, h){
+  if (t === "ocean" || t === "lake") return 0;
+  if (t === "mountain") return h > .8 ? 5 : 4;
+  if (t === "hill") return 3;
+  if (t === "forest") return 2;
+  return h > .45 ? 2 : 1;
+}
+function genMap(){
+  const hN = noiseGen(), mN = noiseGen();
+  map = [];
+  for (let y = 0; y < N; y++){
+    map[y] = [];
+    for (let x = 0; x < N; x++){
+      const h = hN(x, y), m = mN(x, y);
+      let t;
+      if (x + y > 26 || (x >= 15 && y >= 9) || (y >= 15 && x >= 9)) t = "ocean";
+      else if (h > .68) t = "mountain";
+      else if (h > .57) t = "hill";
+      else if (h < .25) t = "lake";
+      else if (m > .6) t = "forest";
+      else if (m < .4) t = "field";
+      else t = "meadow";
+      map[y][x] = { t, b: null, owner: null, x, y, h };
+    }
+  }
+  HOMES.forEach(([hx, hy]) => {
+    map[hy][hx].t = "meadow";
+    const ring = [];
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){
+      const t = tileAt(hx + dx, hy + dy); if (t && (dx || dy)) ring.push(t);
+    }
+    const need = ["field", "forest", "lake", R() < .5 ? "mountain" : "hill", "meadow", "meadow", "field"];
+    need.forEach(n => {
+      const have = ring.find(t => t.t === n && !t.forced);
+      if (have){ have.forced = true; return; }
+      const free = ring.filter(t => !t.forced && t.t !== "ocean" && !(t.x === HALL[0] && t.y === HALL[1]));
+      if (free.length){ const t = free[Math.floor(R() * free.length)]; t.t = n; t.forced = true; }
+    });
+  });
+  const hall = map[HALL[1]][HALL[0]]; hall.t = "meadow"; hall.hall = true;
+  for (const row of map) for (const t of row) t.e = elevFor(t.t, t.h);
+  hall.e = 1;
+}
+
+function newPlayer(i){
+  const [name, color] = PEOPLE[i];
+  const stock = {}; ORDER.forEach(k => stock[k] = 0);
+  Object.assign(stock, { timber: 40, crops: 30, ore: 10, fish: 6, water: 10, energy: 10 });
+  const goalKeys = Object.keys(GOALS);
+  const lvl = i === 0 ? { solar: lvlOf(profile.xp.solar), living: lvlOf(profile.xp.living), circular: lvlOf(profile.xp.circular) }
+                      : { solar: Math.floor(R() * 3), living: Math.floor(R() * 3), circular: Math.floor(R() * 3) };
+  return { id: i, name, color, bot: i > 0, style: STYLES[i], home: HOMES[i], stock, rate: {}, prev: { ...stock }, techs: new Set(),
+    goal: goalKeys[(i + Math.floor(R() * 5)) % 5], mealsGiven: 0, energyMade: 0, chipsMade: 0, rewilds: 0, deals: 0,
+    contrib: 0, buildings: 0, spend: { solar: 0, living: 0, circular: 0 }, taken: 0, lvl, credits: 0, needsHist: [], groundTiles: 0,
+    vote: null, settlers: START_SETTLERS, builtThisSeason: 0, researchedThisSeason: false };
+}
+
+function newGame(){
+  R = rng(Date.now());
+  genMap();
+  players = PEOPLE.map((_, i) => newPlayer(i));
+  tick = 0; health = 56; parts = 0; commons = {}; ORDER.forEach(k => commons[k] = 0);
+  firstBy = {}; logs = []; ended = false; speed = 1; started = false; selected = null; hover = null;
+  council = null; activeRule = null; crisis = null; healthHist = [health]; banners = []; bannerId = 0; buildSeq = 0;
+  rollWeather();
+  log("A new session begins. Six settlements share one damaged valley.");
+  startPlanning();
+  renderTerrain();
+  draw(); renderAll(true);
+  showIntro();
+}
+
+/* ================= rules ================= */
+const you = () => players[0];
+const cheb = (ax, ay, bx, by) => Math.max(Math.abs(ax - bx), Math.abs(ay - by));
+function inClaim(p, x, y){
+  if (cheb(x, y, p.home[0], p.home[1]) <= 2) return true;
+  for (let yy = Math.max(0, y - 2); yy <= Math.min(N - 1, y + 2); yy++)
+    for (let xx = Math.max(0, x - 2); xx <= Math.min(N - 1, x + 2); xx++){
+      const t = map[yy][xx]; if (t.b && t.b.owner === p.id) return true;
+    }
+  return false;
+}
+function techOk(p, d){
+  if (d.tech && !p.techs.has(d.tech)) return false;
+  if (d.techAny && !d.techAny.some(t => p.techs.has(t))) return false;
+  return true;
+}
+const scaled = (cost, m) => { const o = {}; for (const k in cost) o[k] = Math.ceil(cost[k] * m); return o; };
+const affordable = (p, cost) => Object.keys(cost).every(k => p.stock[k] >= cost[k]);
+const pay = (p, cost) => { for (const k in cost) p.stock[k] -= cost[k]; };
+const costText = cost => Object.keys(cost).map(k => `${cost[k]} ${RN(k).toLowerCase()}`).join(", ");
+const quota = () => activeRule === "quotaLow" ? 8 : activeRule === "quotaHigh" ? 25 : 15;
+const bcost = type => activeRule === "toolshare" ? scaled(B[type].cost, .8) : B[type].cost;
+function crewUsed(p){ let c = 0; for (const row of map) for (const t of row) if (t.b && t.b.owner === p.id) c += B[t.b.type].crew; return c; }
+const freeSettlers = p => p.settlers - crewUsed(p);
+
+function buildCheck(p, x, y, type){
+  const t = tileAt(x, y), d = B[type], cost = bcost(type);
+  if (!t) return "No tile";
+  if (phase !== "plan") return "You can build during the planning phase";
+  if (t.hall) return "This is the commons hall";
+  if (t.b) return "Tile already has a building";
+  if (!d.on.includes(t.t)) return `Needs ${d.on.map(o => TER[o].n.toLowerCase()).join(" or ")}`;
+  if (!techOk(p, d)) return d.tech ? `Research ${TECH[d.tech].n} first` : "Research any tier-3 technology first";
+  if (!inClaim(p, x, y)) return "Outside your area";
+  if (p.builtThisSeason >= BUILDS_PER_SEASON) return `You've used all ${BUILDS_PER_SEASON} builds this season`;
+  if (freeSettlers(p) < d.crew) return `Needs ${d.crew} free settler${d.crew > 1 ? "s" : ""}`;
+  const missing = Object.keys(cost).filter(k => p.stock[k] < cost[k]);
+  if (missing.length) return `Not enough ${missing.map(k => RN(k).toLowerCase()).join(" and ")}`;
+  return null;
+}
+function build(p, x, y, type){
+  if (buildCheck(p, x, y, type)) return false;
+  pay(p, bcost(type));
+  const t = map[y][x];
+  t.b = { type, owner: p.id, idle: false, ctr: 0, order: ++buildSeq, staffed: true }; t.owner = p.id;
+  p.buildings++; p.builtThisSeason++;
+  if (type === "rewild") p.rewilds++;
+  return true;
+}
+function techCost(p, id){
+  const T = TECH[id];
+  const m = (firstBy[id] != null && firstBy[id] !== p.id ? .5 : 1) * (1 - .01 * (p.lvl[T.br] || 0));
+  return scaled(T.cost, m);
+}
+function researchCheck(p, id){
+  const T = TECH[id];
+  if (p.techs.has(id)) return "Researched";
+  if (T.req && !p.techs.has(T.req)) return `Needs ${TECH[T.req].n} first`;
+  if (phase !== "plan") return "You can research during the planning phase";
+  if (p.researchedThisSeason) return "One research per season";
+  const c = techCost(p, id), miss = Object.keys(c).filter(k => p.stock[k] < c[k]);
+  if (miss.length) return `Not enough ${miss.map(k => RN(k).toLowerCase()).join(" and ")}`;
+  return null;
+}
+function research(p, id){
+  if (researchCheck(p, id)) return false;
+  const c = techCost(p, id); pay(p, c);
+  p.techs.add(id); p.spend[TECH[id].br] += c.knowledge; p.researchedThisSeason = true;
+  if (firstBy[id] == null){
+    firstBy[id] = p.id;
+    log(`${p.name} researched ${TECH[id].n}. It now costs everyone else 50% less.`, p.color);
+  } else if (!p.bot) log(`You researched ${TECH[id].n}.`, p.color);
+  return true;
+}
+function add(p, k, v){ p.stock[k] += v; }
+const giftMult = () => activeRule === "aidPact" ? 2 : 1;
+function giveCommons(p, k, n){
+  n = Math.min(n, Math.floor(p.stock[k])); if (n <= 0 || k === "parts") return 0;
+  p.stock[k] -= n; commons[k] += n; p.contrib += n * VAL[TIER(k)] * giftMult(); p.deals++;
+  if (k === "meals") p.mealsGiven += n;
+  return n;
+}
+function givePlayer(p, q, k, n){
+  n = Math.min(n, Math.floor(p.stock[k])); if (n <= 0) return 0;
+  const aid = crisis && crisis.target === q.id;
+  p.stock[k] -= n; q.stock[k] += n; p.contrib += n * VAL[TIER(k)] * (aid ? 1.5 : .5) * giftMult(); p.deals++;
+  if (aid) log(`${p.name} sent ${n} ${RN(k).toLowerCase()} as aid to ${q.name}.`, p.color);
+  return n;
+}
+function takeCommons(p, k, n){
+  n = Math.min(n, Math.floor(commons[k]), quota() - p.taken); if (n <= 0) return 0;
+  commons[k] -= n; p.stock[k] += n; p.taken += n; return n;
+}
+function deliverParts(p){
+  const n = Math.floor(p.stock.parts); if (n <= 0 || parts >= PROJECT_PARTS) return;
+  const d = Math.min(n, PROJECT_PARTS - parts);
+  p.stock.parts -= d; parts += d; p.contrib += 25 * d;
+  log(`${p.name} delivered ${d} part${d > 1 ? "s" : ""} to the Skysail (${parts}/${PROJECT_PARTS}).`, p.color);
+}
+
+/* ---- seasons, weather, needs ---- */
+const seasonNo = () => Math.min(SEASONS, Math.floor(tick / TICKS_PER_SEASON) + 1);
+const seasonName = () => SEASON_NAMES[(seasonNo() - 1) % 4];
+function rollWeather(){ const k = Object.keys(WEATHERS); weather = k[Math.floor(R() * k.length)]; }
+function wxMult(kind){
+  if (!kind || kind === "muscle") return 1;
+  return (SEASONMOD[seasonName()][kind] || 1) * (WEATHERS[weather][kind] || 1);
+}
+function needsFor(p){
+  const m = (activeRule === "festival" ? .8 : 1) * (p ? p.settlers : START_SETTLERS), e = crisis && crisis.type === "heatwave" ? 1.3 : 1;
+  return { food: Math.round(NEEDS.food * m), water: Math.round(NEEDS.water * m), energy: Math.round(NEEDS.energy * m * e) };
+}
+const foodStock = p => p.stock.meals * 3 + p.stock.crops + p.stock.fish;
+function needsPreview(p){
+  const n = needsFor(p);
+  return { food: Math.min(1, foodStock(p) / n.food), water: Math.min(1, p.stock.water / n.water), energy: Math.min(1, p.stock.energy / n.energy), n };
+}
+function settleNeeds(p){
+  const n = needsFor(p);
+  let food = n.food;
+  const useMeals = Math.min(Math.floor(p.stock.meals), Math.ceil(food / 3)); p.stock.meals -= useMeals; food -= useMeals * 3;
+  ["crops", "fish"].forEach(k => { const u = Math.min(Math.max(0, food), Math.floor(p.stock[k])); p.stock[k] -= u; food -= u; });
+  const fr = 1 - Math.max(0, food) / n.food;
+  const wr = Math.min(1, p.stock.water / n.water); p.stock.water -= Math.min(p.stock.water, n.water);
+  const er = Math.min(1, p.stock.energy / n.energy); p.stock.energy -= Math.min(p.stock.energy, n.energy);
+  const met = (fr + wr + er) / 3;
+  p.needsHist.push(met);
+  const before = p.settlers;
+  if (met >= .9) p.settlers += 2; else if (met >= .6) p.settlers += 1; else if (met < .35) p.settlers = Math.max(3, p.settlers - 1);
+  return { met, gained: p.settlers - before };
+}
+const needsPreviewAvg = p => { const v = needsPreview(p); return (v.food + v.water + v.energy) / 3; };
+const needsAvg = p => p.needsHist.length ? p.needsHist.reduce((a, b) => a + b, 0) / p.needsHist.length : needsPreviewAvg(p);
+const valleyFloor = () => players.reduce((a, p) => a + needsAvg(p), 0) / players.length;
+function countGround(p){
+  let c = 0;
+  for (const row of map) for (const t of row) if ((t.t === "mountain" || t.t === "hill") && !t.b && cheb(t.x, t.y, p.home[0], p.home[1]) <= 2) c++;
+  return c;
+}
+
+/* ---- council ---- */
+function startCouncil(){
+  const ids = Object.keys(RULES).sort(() => R() - .5).slice(0, 3);
+  council = { options: ids, season: seasonNo() };
+  players.forEach(p => {
+    p.vote = null;
+    if (p.bot){
+      const liked = ids.filter(id => RULES[id].likes.includes(p.style));
+      p.vote = liked.length && R() < .8 ? liked[Math.floor(R() * liked.length)] : (R() < .3 ? "none" : ids[Math.floor(R() * ids.length)]);
+    }
+  });
+}
+function resolveCouncil(){
+  const tally = {}; players.forEach(p => { if (p.vote) tally[p.vote] = (tally[p.vote] || 0) + 1; });
+  let best = "none", bv = tally.none || 0;
+  council.options.forEach(id => { if ((tally[id] || 0) > bv){ best = id; bv = tally[id]; } });
+  council.result = best; council.tally = tally;
+  activeRule = best === "none" ? null : best;
+  if (activeRule === "levy"){ players.forEach(p => { const c = Math.min(3, p.credits); p.credits -= c; p.contrib += c * 3; }); health = Math.min(100, health + 4); }
+  log(activeRule ? `The Council adopted "${RULES[activeRule].n}" (${bv} of ${players.length} votes).` : "The Council kept the current rules.");
+}
+
+/* ---- crises ---- */
+function startCrisis(){
+  const types = Object.keys(CRISES), type = types[Math.floor(R() * types.length)];
+  const target = type === "heatwave" ? null : Math.floor(R() * players.length);
+  crisis = { type, target, until: tick + 18, start: tick };
+  if (type === "heatwave"){ health = Math.max(0, health - 2); log("A heatwave hits the whole valley. Everyone needs more energy this season."); return; }
+  const p = players[target];
+  if (type === "storm"){
+    const mine = []; for (const row of map) for (const t of row) if (t.b && t.b.owner === p.id) mine.push(t);
+    mine.sort(() => R() - .5).slice(0, 2).forEach(t => t.b.damaged = crisis.until);
+  }
+  log(`${CRISES[type].n} in ${p.bot ? p.name + "'s" : "your"} region.`, p.color);
+  if (p.bot) addBanner({ kind: "aid", target, title: `${CRISES[type].n} hits ${p.name}`, text: `${CRISES[type].d}. Aid you send now counts triple toward the shared goal.`, until: crisis.until });
+  else addBanner({ kind: "info", title: `${CRISES[type].n} in your region`, text: `${CRISES[type].d}. Others may send you aid.`, until: crisis.until });
+}
+
+/* ---- restoration credits ---- */
+const WORKS = {
+  restore: { n: "Restore land", cost: 10, d: "The valley heals by 1.5" },
+  study:   { n: "Fund the library commons", cost: 8, d: "You gain 10 knowledge" }
+};
+function publicWork(p, id){
+  const w = WORKS[id]; if (p.credits < w.cost) return false;
+  p.credits -= w.cost;
+  if (id === "restore"){ health = Math.min(100, health + 1.5); p.contrib += 15; log(`${p.name} funded land restoration with Restoration Credits.`, p.color); }
+  else { p.stock.knowledge += 10; p.contrib += 8; }
+  return true;
+}
+
+/* ---- banners ---- */
+function addBanner(b){ b.id = ++bannerId; b.from = tick; banners.push(b); if (banners.length > 4) banners.shift(); }
+function makeOffer(){
+  if (banners.filter(b => b.kind === "offer").length >= 2) return;
+  const bots = players.filter(p => p.bot), p = bots[Math.floor(R() * bots.length)];
+  const have = ORDER.filter(k => !["parts", "knowledge", "energy"].includes(k) && p.stock[k] >= 20);
+  if (!have.length) return;
+  const give = have[Math.floor(R() * have.length)];
+  const wantPool = ["timber", "crops", "ore", "fish", "water", "alloy", "meals", "bio"].filter(k => k !== give && p.stock[k] < 15);
+  if (!wantPool.length) return;
+  const want = wantPool[Math.floor(R() * wantPool.length)];
+  const gq = Math.max(2, Math.round(12 / VAL[TIER(give)]));
+  const wq = Math.max(2, Math.round(gq * VAL[TIER(give)] / VAL[TIER(want)] * .9));
+  addBanner({ kind: "offer", from: p.id, give, gq, want, wq, title: `${p.name} offers a trade`, text: `${gq} ${RN(give).toLowerCase()} for your ${wq} ${RN(want).toLowerCase()}`, until: tick + 12 });
+}
+function acceptOffer(b){
+  const p = you(), q = players[b.from];
+  if (p.stock[b.want] < b.wq){ toast(`You need ${b.wq} ${RN(b.want).toLowerCase()} for this trade.`); return; }
+  if (q.stock[b.give] < b.gq){ toast(`${q.name} no longer has enough ${RN(b.give).toLowerCase()}.`); dropBanner(b.id); return; }
+  p.stock[b.want] -= b.wq; q.stock[b.want] += b.wq; q.stock[b.give] -= b.gq; p.stock[b.give] += b.gq;
+  p.deals++; q.deals++; dropBanner(b.id);
+  log(`You traded ${b.wq} ${RN(b.want).toLowerCase()} for ${b.gq} ${RN(b.give).toLowerCase()} with ${q.name}.`, p.color);
+}
+const dropBanner = id => { banners = banners.filter(b => b.id !== id); };
+function sendAid(b, kind){
+  const p = you(), q = players[b.target];
+  const k = kind === "food" ? (p.stock.meals >= 2 ? "meals" : p.stock.crops >= 5 ? "crops" : "fish") : kind;
+  const n = givePlayer(p, q, k, k === "meals" ? 2 : 5);
+  if (n) toast(`Sent ${n} ${RN(k).toLowerCase()} to ${q.name}.`); else toast(`You don't have enough ${kind} to send.`);
+}
+
+/* ---- scoring ---- */
+function synergy(x, y, owner){
+  let c = 0;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+    if (!dx && !dy) continue; const t = tileAt(x + dx, y + dy);
+    if (t && t.b && t.b.owner !== owner) c++;
+  }
+  return Math.min(3, c) * .1;
+}
+function pressureMod(p, type){
+  if ((type === "mine" || type === "alloyworks") && p.techs.has("recycle")) return .6;
+  if ((type === "farm" || type === "forestry") && p.techs.has("myco")) return .5;
+  return 1;
+}
+function score(p){
+  const g = GOALS[p.goal], gp = Math.min(1, p[g.key] / g.target);
+  const maxC = Math.max(1, ...players.map(q => q.contrib));
+  const dev = p.techs.size / 9 * .6 + Math.min(1, p.buildings / 18) * .4;
+  const nd = needsAvg(p);
+  return { total: gp * 35 + p.contrib / maxC * 35 + dev * 15 + nd * 15, gp, nd };
+}
+const count = (p, type) => { let c = 0; for (const row of map) for (const t of row) if (t.b && t.b.owner === p.id && t.b.type === type) c++; return c; };
+
+/* ================= season flow ================= */
+function startPlanning(){
+  phase = "plan";
+  players.forEach(p => { p.builtThisSeason = 0; p.researchedThisSeason = false; p.taken = 0; });
+  activeRule = null; startCouncil();
+  players.forEach(p => { if (p.bot) botPlan(p); });
+  banners = banners.filter(b => b.kind === "info" && b.until > tick);
+}
+function beginSeason(){
+  if (phase !== "plan") return;
+  resolveCouncil();
+  phase = "run";
+  log(`${seasonName()} (season ${seasonNo()}) is under way. Weather: ${weather.toLowerCase()}.`);
+}
+function endSeason(){
+  let mine = null;
+  players.forEach(p => { deliverParts(p); const r = settleNeeds(p); if (!p.bot) mine = r; });
+  healthHist.push(health);
+  if (mine) log(`Your people's needs were ${Math.round(mine.met * 100)}% met${mine.gained > 0 ? `, and ${mine.gained} new settler${mine.gained > 1 ? "s" : ""} joined you` : mine.gained < 0 ? ". A settler left" : ""}.`, players[0].color);
+  if (tick >= END_TICK) return finish();
+  rollWeather();
+  log(`${seasonName()} begins (season ${seasonNo()}). Weather: ${weather.toLowerCase()}. Plan your season.`);
+  startPlanning();
+}
+
+/* ================= simulation (run phase) ================= */
+function step(){
+  tick++;
+  let pressure = 0, heal = 0;
+  const cap = players.map(p => p.settlers);
+  const all = []; for (const row of map) for (const t of row) if (t.b) all.push(t);
+  all.sort((a, b) => a.b.order - b.b.order);
+  for (const t of all){
+    const b = t.b, p = players[b.owner], d = B[b.type];
+    b.staffed = cap[p.id] >= d.crew; if (b.staffed) cap[p.id] -= d.crew;
+    if (!b.staffed){ b.idle = true; continue; }
+    if (b.damaged){ if (tick < b.damaged){ b.idle = true; pressure += d.p * pressureMod(p, b.type); continue; } b.damaged = 0; }
+    let mult = (1 + .01 * (d.br ? p.lvl[d.br] : 0)) * (1 + synergy(t.x, t.y, b.owner)) * (d.inp && p.techs.has("zerowaste") ? 1.25 : 1) * wxMult(d.wx);
+    if (crisis && crisis.type === "drought" && crisis.target === p.id && ["farm", "waterworks", "waterwheel"].includes(b.type)) mult *= .25;
+    if (b.type === "mine" && activeRule === "extractionCap") mult *= .75;
+    if (d.out && !d.inp){
+      for (const k in d.out){ const v = d.out[k] * mult; add(p, k, v); if (k === "energy") p.energyMade += v; }
+      b.idle = false;
+    } else if (d.inp){
+      if (Object.keys(d.inp).every(k => p.stock[k] >= d.inp[k])){
+        for (const k in d.inp) p.stock[k] -= d.inp[k];
+        for (const k in d.out){ const v = d.out[k] * mult; add(p, k, v); if (k === "chips") p.chipsMade += v; }
+        b.idle = false;
+      } else b.idle = true;
+    } else if (b.type === "rewild"){
+      b.ctr++;
+      const seeded = p.stock.seeds >= 1;
+      if (b.ctr >= 10){ b.ctr = 0; if (seeded) p.stock.seeds -= 1; }
+      const h = seeded ? .02 : .006; heal += h; p.contrib += h * TUNE.healCredit; p.credits += h * 20; b.idle = !seeded;
+    } else if (b.type === "workshop"){
+      b.ctr++;
+      if (b.ctr >= 3){
+        b.ctr = 0;
+        const avail = ["glass", "chips", "seeds"].filter(k => p.stock[k] >= 1);
+        if (avail.length >= 2){ p.stock[avail[0]]--; p.stock[avail[1]]--; add(p, "parts", 1); b.idle = false; } else b.idle = true;
+      }
+    }
+    pressure += TUNE.pressure * d.p * pressureMod(p, b.type) * (b.type === "mine" && activeRule === "extractionCap" ? .5 : 1);
+  }
+  const sky = players.filter(p => p.techs.has("sky")).length * .006;
+  health = Math.max(0, Math.min(100, health + .004 - pressure + heal + sky));
+  if (tick % 5 === 0) players.forEach(p => { p.groundTiles = countGround(p); });
+  players.forEach(p => { p.credits += p.groundTiles * .01 + (p.techs.has("sky") ? .05 : 0); });
+
+  players.forEach((p, i) => { if (p.bot && (tick + i) % 3 === 0) botRun(p); });
+  if (tick % 7 === 0) makeOffer();
+
+  const inSeason = tick % TICKS_PER_SEASON;
+  if (inSeason === 8 && tick > TICKS_PER_SEASON && !crisis && R() < TUNE.crisisBase + TUNE.crisisPerSeason * seasonNo()) startCrisis();
+  if (crisis && tick >= crisis.until){ log(`The ${CRISES[crisis.type].n.toLowerCase()} has passed.`); crisis = null; }
+  banners = banners.filter(b => b.until > tick);
+
+  players.forEach(p => { ORDER.forEach(k => { const dlt = p.stock[k] - (p.prev[k] || 0); p.rate[k] = (p.rate[k] || 0) * .9 + dlt * .1; p.prev[k] = p.stock[k]; }); });
+
+  if (health <= 0) return finish(true);
+  if (tick % TICKS_PER_SEASON === 0) endSeason();
+}
+function finish(collapsed){
+  const fl = valleyFloor();
+  if (collapsed) return endGame(false, "Valley Health reached 0 and the valley collapsed.");
+  const ok = health >= HEALTH_TARGET && parts >= PROJECT_PARTS && fl >= FLOOR_TARGET;
+  endGame(ok, ok ? "Everyone's needs were met, the valley is healthy, and the Skysail is complete." :
+    parts < PROJECT_PARTS ? `The Skysail was not finished (${parts}/${PROJECT_PARTS} parts).` :
+    health < HEALTH_TARGET ? `Valley Health ended at ${Math.round(health)}, below the target of ${HEALTH_TARGET}. The valley was pushed past its limit.` :
+    `Only ${Math.round(fl * 100)}% of people's needs were met on average, below the ${Math.round(FLOOR_TARGET * 100)}% floor.`);
+}
+
+/* ================= computer players ================= */
+const BRANCH_ORDER = { green: ["living", "solar", "circular"], greedy: ["circular", "solar", "living"], balanced: ["solar", "circular", "living"] };
+function nextTech(p){
+  for (const br of BRANCH_ORDER[p.style]){
+    const list = Object.keys(TECH).filter(id => TECH[id].br === br && !p.techs.has(id)).sort((a, b) => TECH[a].tier - TECH[b].tier);
+    for (const id of list) if (!researchCheck(p, id)) return id;
+  }
+  return null;
+}
+function wishList(p){
+  const c = t => count(p, t), L = [];
+  const push = (t, cond) => { if (cond) L.push(t); };
+  push("library", c("library") < 1);
+  push("farm", c("farm") < 1);
+  push("forestry", c("forestry") < 1);
+  push("solar", c("solar") < 1);
+  push("waterworks", c("waterworks") < 1);
+  push("mine", c("mine") < 1);
+  push("fishery", c("fishery") < 1);
+  push("alloyworks", c("alloyworks") < 1);
+  push("bioworks", c("bioworks") < 1);
+  push("kitchen", c("kitchen") < 1);
+  push("waterwheel", c("waterwheel") < 1);
+  push("solar", c("solar") < 2);
+  push("library", c("library") < 2);
+  push("glassworks", p.techs.has("glass") && c("glassworks") < 1);
+  push("seedbank", p.techs.has("seeds") && c("seedbank") < 1);
+  push("chipfab", p.techs.has("chips") && c("chipfab") < 1);
+  push("wind", p.techs.has("wind") && c("wind") < 2);
+  push("rewild", p.techs.has("rewild") && c("rewild") < (p.style === "green" ? 3 : 1));
+  push("workshop", techOk(p, B.workshop) && c("workshop") < 1);
+  push("mine", p.style === "greedy" && c("mine") < 3);
+  const nd = needsFor(p);
+  push("solar", p.stock.energy < nd.energy * 1.2 && c("solar") < 7);
+  push("farm", foodStock(p) < nd.food * 1.2 && c("farm") < 6);
+  push("kitchen", foodStock(p) < nd.food * 1.2 && c("kitchen") < 2);
+  push("waterworks", p.stock.water < nd.water * 1.2 && c("waterworks") < 4);
+  push("pedal", p.stock.energy < nd.energy && c("pedal") < 3);
+  push("library", seasonNo() > 2 && c("library") < 3);
+  return L;
+}
+function tryBuild(p, type){
+  const d = B[type];
+  if (!techOk(p, d) || !affordable(p, bcost(type)) || freeSettlers(p) < d.crew || p.builtThisSeason >= BUILDS_PER_SEASON) return false;
+  let best = null, bd = 1e9;
+  for (const row of map) for (const t of row){
+    if (t.b || t.hall || !d.on.includes(t.t) || !inClaim(p, t.x, t.y)) continue;
+    const dist = cheb(t.x, t.y, p.home[0], p.home[1]) + R() * .5;
+    if (dist < bd){ bd = dist; best = t; }
+  }
+  return best ? build(p, best.x, best.y, type) : false;
+}
+function botPlan(p){
+  const id = nextTech(p); if (id) research(p, id);
+  for (const type of wishList(p)){ if (p.builtThisSeason >= BUILDS_PER_SEASON) break; tryBuild(p, type); }
+}
+function botRun(p){
+  if (p.credits >= 10) publicWork(p, p.style === "greedy" ? "study" : (health < 75 ? "restore" : "study"));
+  if (p.goal === "feeder" && p.stock.meals >= 12) giveCommons(p, "meals", 10);
+  if (R() < .06){ const rich = ORDER.filter(k => TIER(k) <= 1 && k !== "knowledge" && k !== "energy" && p.stock[k] > 60); if (rich.length) giveCommons(p, rich[0], 10); }
+  if (R() < .04){ const rich = ["glass", "chips", "seeds"].filter(k => p.stock[k] > 6); if (rich.length) giveCommons(p, rich[0], 2); }
+  if (count(p, "workshop")) ["glass", "chips", "seeds"].forEach(k => { if (p.stock[k] < 1 && commons[k] >= 1) takeCommons(p, k, 2); });
+  ["timber", "crops", "ore", "fish", "water"].forEach(k => { if (p.stock[k] < 3 && commons[k] >= 3) takeCommons(p, k, 5); });
+  if (crisis && crisis.target != null && crisis.target !== p.id && R() < .12){
+    const k = ["meals", "crops", "water", "timber"].find(k => p.stock[k] >= 15);
+    if (k) givePlayer(p, players[crisis.target], k, 5);
+  }
+}
+
+/* ================= log + toast ================= */
+function log(text, color){ logs.unshift({ text, color, season: seasonNo() }); if (logs.length > 40) logs.pop(); }
+let toastT;
+function toast(msg){ const el = $("#toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 2600); }
+
+/* ================= drawing ================= */
+const cv = $("#map"), ctx = cv.getContext("2d");
+const W = cv.width, H = cv.height;
+let g = ctx, terrainImg, ZOFF = 0;
+const P = (x, y, z = 0) => [OX + (x - y) * TW / 2, OY + (x + y) * TH / 2 - z - ZOFF];
+const elev = t => t.e * ZH;
+const LIGHT = "#ffe1a6", SHADOW = "#3b4a86";
+function rgb(h){ const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function mix(a, b, t){ const A = rgb(a), Bc = rgb(b); return "#" + A.map((v, i) => Math.round(v + (Bc[i] - v) * t).toString(16).padStart(2, "0")).join(""); }
+function rgba(h, a){ const c = rgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function poly(pts, fill, stroke, lw){ g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); if (fill){ g.fillStyle = fill; g.fill(); } if (stroke){ g.strokeStyle = stroke; g.lineWidth = lw || 1; g.stroke(); } }
+function line(a, b, col, lw){ g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.strokeStyle = col; g.lineWidth = lw || 1; g.lineCap = "round"; g.stroke(); }
+function circ(x, y, r, col){ g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fillStyle = col; g.fill(); }
+function oval(x, y, rx, ry, rot, col){ g.beginPath(); g.ellipse(x, y, rx, ry, rot || 0, 0, Math.PI * 2); g.fillStyle = col; g.fill(); }
+const quad = (x0, y0, x1, y1, z) => [P(x0, y0, z), P(x1, y0, z), P(x1, y1, z), P(x0, y1, z)];
+const leftQ = (x, y, w, d, za, zb) => [P(x, y + d, za), P(x + w, y + d, za), P(x + w, y + d, zb), P(x, y + d, zb)];
+const rightQ = (x, y, w, d, za, zb) => [P(x + w, y + d, za), P(x + w, y, za), P(x + w, y, zb), P(x + w, y + d, zb)];
+function face(pts, c, lit){
+  const ys = pts.map(p => p[1]), top = Math.min(...ys), bot = Math.max(...ys);
+  const base = lit ? mix(c, LIGHT, .18) : mix(c, SHADOW, .32);
+  const gr = g.createLinearGradient(0, top, 0, bot + .01); gr.addColorStop(0, base); gr.addColorStop(1, mix(base, "#1d2433", .2));
+  poly(pts, gr);
+}
+function block(x, y, w, d, z0, h, c, topc){
+  face(leftQ(x, y, w, d, z0, z0 + h), c, false);
+  face(rightQ(x, y, w, d, z0, z0 + h), c, true);
+  poly(quad(x, y, x + w, y + d, z0 + h), topc || mix(c, "#fff4d6", .14));
+}
+const GREENS = ["#5f9a48", "#6fae52", "#4f8a43", "#7bb85a"];
+let dR = rng(99);
+const dpick = a => a[Math.floor(dR() * a.length)];
+function bush(sx, sy, r, base){
+  oval(sx - r * .25, sy + r * .2, r, r * .8, 0, mix(base, SHADOW, .38));
+  circ(sx, sy, r * .9, base);
+  circ(sx + r * .28, sy - r * .3, r * .5, mix(base, "#f3e6a0", .35));
+}
+function tree(cx, cy, r, base){
+  const [sx, sy] = P(cx, cy);
+  g.save(); g.globalAlpha = .2; oval(sx - r * .7, sy + 1, r, r * .35, -.2, SHADOW); g.restore();
+  line([sx, sy], [sx, sy - r * 1.1], "#6b4a33", Math.max(2, r * .22));
+  const cy0 = sy - r * 1.4;
+  for (let i = 0; i < 4; i++){ const a = i / 4 * Math.PI * 2 + .3; bush(sx + Math.cos(a) * r * .45, cy0 + Math.sin(a) * r * .35, r * .6, base); }
+  bush(sx + r * .1, cy0 - r * .3, r * .6, base);
+}
+
+function renderTerrain(){
+  terrainImg = document.createElement("canvas"); terrainImg.width = W; terrainImg.height = H;
+  g = terrainImg.getContext("2d"); dR = rng(7);
+  const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#bfe1f2"); bg.addColorStop(1, "#eef3dd");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  ZOFF = 0;
+  // island underside
+  face([P(0, N, 0), P(N, N, 0), P(N, N, -CLIFF), P(0, N, -CLIFF)], "#7a5236", false);
+  face([P(N, 0, 0), P(N, N, 0), P(N, N, -CLIFF), P(N, 0, -CLIFF)], "#8a5c3a", true);
+  // tiles back to front, each as a raised column
+  for (let s = 0; s < 2 * N; s++) for (let y = 0; y < N; y++){
+    const x = s - y; if (x < 0 || x >= N) continue;
+    const t = map[y][x], z = elev(t), water = t.t === "ocean" || t.t === "lake";
+    ZOFF = 0;
+    const soil = t.t === "mountain" ? "#8d8679" : t.t === "hill" ? "#8a6a48" : "#7f5a3a";
+    if (z > 0){
+      face([P(x, y + 1, 0), P(x + 1, y + 1, 0), P(x + 1, y + 1, z), P(x, y + 1, z)], soil, false);
+      face([P(x + 1, y + 1, 0), P(x + 1, y, 0), P(x + 1, y, z), P(x + 1, y + 1, z)], soil, true);
+      // grass lip
+      if (t.t !== "mountain"){
+        poly([P(x, y + 1, z - 3), P(x + 1, y + 1, z - 3), P(x + 1, y + 1, z), P(x, y + 1, z)], mix(TER[t.t].c, SHADOW, .25));
+        poly([P(x + 1, y + 1, z - 3), P(x + 1, y, z - 3), P(x + 1, y, z), P(x + 1, y + 1, z)], mix(TER[t.t].c, LIGHT, .1));
+      }
+    }
+    ZOFF = z;
+    const c = TER[t.t].c;
+    if (water){
+      const gr = g.createLinearGradient(...P(x, y), ...P(x + 1, y + 1)); gr.addColorStop(0, mix(c, "#1f4f7a", .2)); gr.addColorStop(1, mix(c, "#ffffff", .15));
+      poly(quad(x, y, x + 1, y + 1, 0), gr, gr, 1);
+      for (let k = 0; k < 3; k++){ const [sx, sy] = P(x + .15 + dR() * .6, y + .15 + dR() * .7); line([sx, sy], [sx + 8, sy], "rgba(240,252,255,.45)", 1.2); }
+    } else {
+      const top = t.e >= 3 ? mix(c, LIGHT, .08 * (t.e - 2)) : c;
+      poly(quad(x, y, x + 1, y + 1, 0), top, top, 1);
+      for (let k = 0; k < 22; k++){
+        const [sx, sy] = P(x + .08 + dR() * .84, y + .08 + dR() * .84), s2 = dR() < .5 ? mix(c, "#fff3c0", .3) : mix(c, SHADOW, .2);
+        if (t.t === "field") line([sx, sy], [sx + 4, sy - 2], rgba(s2, .55), 1.8);
+        else line([sx, sy], [sx, sy - 3 - dR() * 3], rgba(s2, .45), 1.4);
+      }
+      if ((t.t === "meadow" || t.t === "hill") && dR() < .5) circ(...P(x + .2 + dR() * .6, y + .2 + dR() * .6, 2), 1.7, dpick(["#f2a3b8", "#fff7e8", "#ffd96a"]));
+      if (t.t === "field") for (let k = 0; k < 4; k++) line(P(x + .2 + k * .2, y + .1), P(x + .2 + k * .2, y + .9), "rgba(120,96,40,.35)", 1.6);
+    }
+    // decorations
+    if (t.t === "forest") for (let k = 0; k < 3; k++) tree(x + .25 + dR() * .5, y + .25 + dR() * .5, 6 + dR() * 3, dpick(GREENS));
+    if (t.t === "mountain"){
+      const [sx, sy] = P(x + .5, y + .5), h = 24 + dR() * 10;
+      poly([[sx - 24, sy + 2], [sx + 4, sy - h], [sx + 24, sy + 2]], mix("#9a9284", SHADOW, .25));
+      poly([[sx + 4, sy - h], [sx + 24, sy + 2], [sx + 6, sy + 4]], mix("#b3aa98", LIGHT, .25));
+      if (t.e >= 5) poly([[sx - 3, sy - h + 9], [sx + 4, sy - h], [sx + 10, sy - h + 8]], "#f4f2ec");
+    }
+  }
+  ZOFF = 0;
+  const lg = g.createLinearGradient(OX - 480, 0, OX + 480, 0); lg.addColorStop(0, rgba(SHADOW, .08)); lg.addColorStop(1, rgba(LIGHT, .1)); g.fillStyle = lg; g.fillRect(0, 0, W, H);
+  g = ctx;
+}
+
+function drawHall(t){
+  const x = t.x, y = t.y;
+  ZOFF = elev(t);
+  block(x + .15, y + .15, .7, .7, 0, 6, "#e9e2cf");
+  for (const [px, py] of [[.22, .22], [.78, .22], [.78, .78], [.22, .78]]) line(P(x + px, y + py, 6), P(x + px, y + py, 26), "#9a6a42", 2.5);
+  const [dx, dy] = P(x + .5, y + .5, 26);
+  g.beginPath(); g.ellipse(dx, dy, 24, 12, 0, 0, Math.PI); g.arc(dx, dy, 24, Math.PI, 0); g.closePath(); g.fillStyle = "#3f7a63"; g.fill();
+  circ(dx + 7, dy - 12, 4, "#7fb39a");
+  // Skysail: mast and kite sail filling up with progress
+  const [mx, my] = P(x + .85, y + .2, 6);
+  line([mx, my], [mx, my - 80], "#7a5236", 2.5);
+  const sail = [[mx, my - 80], [mx + 46, my - 64], [mx + 6, my - 30]];
+  poly(sail, "rgba(255,255,255,.35)", "rgba(255,255,255,.9)", 1.2);
+  const f = parts / PROJECT_PARTS;
+  if (f > 0){ g.save(); g.beginPath(); sail.forEach((p, i) => i ? g.lineTo(...p) : g.moveTo(...p)); g.closePath(); g.clip();
+    g.fillStyle = "#fbf3dc"; g.fillRect(mx - 5, my - 30 - 52 * f, 60, 52 * f + 2); g.restore();
+    poly(sail, null, "#e2a136", 1.4); }
+  ZOFF = 0;
+}
+
+function drawBuilding(t){
+  const b = t.b, x = t.x, y = t.y, p = players[b.owner], c = p.color;
+  ZOFF = elev(t);
+  poly(quad(x + .05, y + .05, x + .95, y + .95, 0), rgba(c, .16), c, 1.6);
+  const cx = x + .5, cy = y + .5, [sx, sy] = P(cx, cy);
+  switch (b.type){
+    case "farm":
+      poly(quad(x + .12, y + .12, x + .58, y + .88, 1), "#d8c85a");
+      for (let k = 0; k < 4; k++) line(P(x + .18 + k * .11, y + .16, 1), P(x + .18 + k * .11, y + .84, 1), "#7f9a3a", 2);
+      block(x + .62, y + .3, .28, .4, 0, 14, "#a8573a", "#5b6f74"); break;
+    case "forestry":
+      tree(x + .3, y + .35, 8, "#4f8a43"); tree(x + .62, y + .3, 7, "#6fae52");
+      for (let k = 0; k < 3; k++) block(x + .45, y + .62 + k * .08, .4, .06, 0, 4 + k, "#9a6a42"); break;
+    case "mine":
+      block(x + .2, y + .2, .6, .6, 0, 16, "#8d8679", "#a39a89");
+      poly([P(x + .38, y + .8, 0), P(x + .62, y + .8, 0), P(x + .62, y + .8, 11), P(x + .38, y + .8, 11)], "#2e2a26");
+      block(x + .7, y + .82, .14, .1, 0, 5, "#c9a646"); break;
+    case "fishery":
+      block(x + .15, y + .4, .7, .2, 0, 3, "#b98a5a");
+      oval(sx + 10, sy + 6, 10, 4, 0, "#e9e2cf"); line([sx + 10, sy + 5], [sx + 10, sy - 10], "#7a5236", 1.5);
+      poly([[sx + 10, sy - 10], [sx + 18, sy - 2], [sx + 10, sy - 2]], "#fbf6ea"); break;
+    case "waterworks": {
+      const r = 12, h = 18;
+      const gr = g.createLinearGradient(sx - r, 0, sx + r, 0); gr.addColorStop(0, "#5c8fb5"); gr.addColorStop(1, "#a9d4ea");
+      g.fillStyle = gr; g.fillRect(sx - r, sy - h, r * 2, h); g.beginPath(); g.ellipse(sx, sy, r, r * .5, 0, 0, Math.PI); g.fill();
+      oval(sx, sy - h, r, r * .5, 0, "#cfe8f3"); break; }
+    case "waterwheel":
+      block(x + .2, y + .55, .6, .12, 0, 6, "#9a6a42");
+      g.beginPath(); g.ellipse(sx, sy - 12, 13, 13, 0, 0, Math.PI * 2); g.strokeStyle = "#7a5236"; g.lineWidth = 3; g.stroke();
+      for (let k = 0; k < 6; k++){ const a = k * Math.PI / 3; line([sx, sy - 12], [sx + Math.cos(a) * 13, sy - 12 + Math.sin(a) * 13], "#9a6a42", 2); }
+      circ(sx, sy - 12, 2.5, "#5b3a22"); break;
+    case "pedal":
+      block(x + .25, y + .25, .5, .5, 0, 12, "#d9c49a", "#7a9a4a");
+      { const [px, py] = P(x + .7, y + .82, 0); g.beginPath(); g.arc(px - 6, py - 4, 4, 0, Math.PI * 2); g.moveTo(px + 10, py - 4); g.arc(px + 6, py - 4, 4, 0, Math.PI * 2); g.strokeStyle = "#3a3f55"; g.lineWidth = 1.5; g.stroke(); line([px - 6, py - 4], [px, py - 10], "#e2603f", 1.5); line([px, py - 10], [px + 6, py - 4], "#e2603f", 1.5); }
+      break;
+    case "solar":
+      for (let k = 0; k < 2; k++){ const y0 = y + .18 + k * .34;
+        const q = [P(x + .15, y0, 12), P(x + .8, y0, 4), P(x + .8, y0 + .26, 4), P(x + .15, y0 + .26, 12)];
+        const gr = g.createLinearGradient(q[0][0], q[0][1], q[2][0], q[2][1] + .01); gr.addColorStop(0, "#5b8fc4"); gr.addColorStop(1, "#24426e"); poly(q, gr, "#cfe2f2", .8); }
+      break;
+    case "wind":
+      poly([[sx - 2.5, sy], [sx + 2.5, sy], [sx + 1, sy - 54], [sx - 1, sy - 54]], "#f3f1ea");
+      for (let k = 0; k < 3; k++){ const a = k * 2.094 + .4; line([sx, sy - 54], [sx + Math.cos(a) * 22, sy - 54 + Math.sin(a) * 22], "#fbfaf5", 2.4); }
+      circ(sx, sy - 54, 3, "#ddd8cc"); break;
+    case "library": {
+      block(x + .2, y + .2, .6, .6, 0, 18, "#efe2c6");
+      const [dx, dy] = P(cx, cy, 18);
+      g.beginPath(); g.ellipse(dx, dy, 14, 7, 0, 0, Math.PI); g.arc(dx, dy, 14, Math.PI, 0); g.closePath(); g.fillStyle = "#3f7a63"; g.fill();
+      circ(dx + 4, dy - 8, 3, "#7fb39a"); break; }
+    case "alloyworks":
+      block(x + .15, y + .2, .55, .6, 0, 16, "#aab3b4");
+      block(x + .72, y + .3, .14, .14, 0, 34, "#8d969a");
+      { const [tx, ty] = P(x + .79, y + .37, 34); oval(tx, ty - 4, 6, 3, -.4, "#6fae52"); } break;
+    case "kitchen":
+      block(x + .2, y + .2, .6, .6, 0, 14, "#efe2c6", "#e07a3f");
+      poly(leftQ(x + .42, y + .2, .16, .6, 0, 8), "#7a5236"); break;
+    case "bioworks":
+      block(x + .2, y + .2, .6, .6, 0, 14, "#b98a5a", "#6aa64c");
+      for (let k = 0; k < 4; k++){ const [bx, by] = P(x + .25 + k * .15, y + .5, 14); bush(bx, by - 2, 4, GREENS[k]); } break;
+    case "glassworks":
+      g.save(); g.globalAlpha = .75; block(x + .18, y + .2, .64, .6, 0, 18, "#a9d8e6", "#d8f0f6"); g.restore();
+      for (let k = 1; k < 4; k++) line(P(x + .18 + k * .16, y + .8, 0), P(x + .18 + k * .16, y + .8, 18), "#ffffff", 1); break;
+    case "chipfab":
+      block(x + .15, y + .18, .7, .64, 0, 20, "#f2f4f2");
+      poly(leftQ(x + .15, y + .18, .7, .64, 10, 14), "#2a7f78"); poly(rightQ(x + .15, y + .18, .7, .64, 10, 14), "#3aa199"); break;
+    case "seedbank":
+      bush(sx - 4, sy - 4, 5, "#6fae52"); bush(sx + 5, sy - 6, 4, "#8cc461");
+      g.beginPath(); g.ellipse(sx, sy, 16, 8, 0, 0, Math.PI); g.arc(sx, sy, 16, Math.PI, 0); g.closePath();
+      g.fillStyle = "rgba(205,236,246,.55)"; g.fill(); g.strokeStyle = "#ffffff"; g.lineWidth = 1.2; g.stroke(); break;
+    case "rewild": {
+      const fl = ["#f2a3b8", "#ffd96a", "#b49be0", "#fff7e8"];
+      for (let k = 0; k < 6; k++){ const [fx, fy] = P(x + .2 + ((k * 37) % 60) / 100, y + .2 + ((k * 53) % 60) / 100); circ(fx, fy - 2, 2.4, fl[k % 4]); }
+      tree(x + .45, y + .45, 6, "#7bb85a"); tree(x + .68, y + .3, 5, "#6fae52");
+      g.beginPath(); g.moveTo(sx - 10, sy - 30); g.quadraticCurveTo(sx - 4, sy - 22, sx - 10, sy - 18); g.quadraticCurveTo(sx - 16, sy - 22, sx - 10, sy - 30); g.fillStyle = "#4f9fc0"; g.fill(); break; }
+    case "workshop": {
+      let z = 0;
+      for (let s = 0; s < 3; s++){ block(x + .25, y + .25, .5, .5, z, 16, "#f4efe4"); z += 16; block(x + .2, y + .2, .6, .6, z, 3, "#6fae52"); z += 3; }
+      const [tx, ty] = P(cx, cy, z); bush(tx, ty - 2, 6, "#6fae52"); break; }
+  }
+  const [fx, fy] = P(x + .12, y + .12, 0);
+  line([fx, fy], [fx, fy - 20], "#5b4a3a", 1.4);
+  poly([[fx, fy - 20], [fx + 9, fy - 17], [fx, fy - 14]], c);
+  const [ix, iy] = P(cx, cy, 34);
+  if (b.damaged && b.damaged > tick){ circ(ix, iy, 7, "#c8553a"); g.fillStyle = "#ffffff"; g.font = "bold 10px Nunito, sans-serif"; g.textAlign = "center"; g.fillText("!", ix, iy + 3.5); }
+  else if (!b.staffed){ circ(ix, iy, 7, "#e2a136"); g.fillStyle = "#ffffff"; g.font = "bold 9px Nunito, sans-serif"; g.textAlign = "center"; g.fillText("?", ix, iy + 3); }
+  else if (b.idle){ circ(ix, iy, 6, "rgba(255,255,255,.9)"); g.fillStyle = "#5d6f66"; g.font = "bold 9px Nunito, sans-serif"; g.textAlign = "center"; g.fillText("…", ix, iy + 2); }
+  ZOFF = 0;
+}
+
+function draw(){
+  g = ctx; ZOFF = 0;
+  g.clearRect(0, 0, W, H);
+  g.drawImage(terrainImg, 0, 0);
+  const showClaim = started && tab === "build" && phase === "plan";
+  for (let s = 0; s < 2 * N; s++) for (let y = 0; y < N; y++){
+    const x = s - y; if (x < 0 || x >= N) continue;
+    const t = map[y][x];
+    if (showClaim && !t.b && !t.hall && inClaim(you(), x, y)){ ZOFF = elev(t); poly(quad(x + .08, y + .08, x + .92, y + .92, 0), "rgba(255,255,255,.14)", "rgba(255,255,255,.6)", 1); ZOFF = 0; }
+    const home = players.find(p => p.home[0] === x && p.home[1] === y);
+    if (home && !t.b){ ZOFF = elev(t); const [sx, sy] = P(x + .5, y + .5); oval(sx, sy, 12, 6, 0, rgba(home.color, .35)); line([sx, sy], [sx, sy - 26], "#5b4a3a", 1.6); poly([[sx, sy - 26], [sx + 12, sy - 22], [sx, sy - 18]], home.color); ZOFF = 0; }
+    if (t.hall) drawHall(t);
+    if (t.b) drawBuilding(t);
+  }
+  if (health < HEALTH_TARGET){ g.fillStyle = `rgba(150,118,80,${Math.min(.45, (HEALTH_TARGET - health) / 140)})`; g.fillRect(0, 0, W, H); }
+  const outline = (t, fill, col, lw) => { ZOFF = elev(t); poly(quad(t.x, t.y, t.x + 1, t.y + 1, 0), fill, col, lw); ZOFF = 0; };
+  if (hover && hover !== selected) outline(hover, null, "rgba(255,255,255,.85)", 1.5);
+  if (selected){ outline(selected, "rgba(255,240,180,.2)", "#fff6d8", 3); outline(selected, null, "#e2a136", 1.4); }
+  if (phase === "plan" && started && !ended){
+    g.fillStyle = "rgba(32,48,42,.55)"; g.fillRect(W - 168, 12, 156, 30);
+    g.fillStyle = "#ffffff"; g.font = "bold 14px Nunito, sans-serif"; g.textAlign = "center"; g.fillText("Planning · paused", W - 90, 32);
+  }
+}
+
+function pick(e){
+  const r = cv.getBoundingClientRect(), sx = (e.clientX - r.left) * W / r.width, sy = (e.clientY - r.top) * H / r.height;
+  for (let s = 2 * N - 2; s >= 0; s--) for (let y = N - 1; y >= 0; y--){
+    const x = s - y; if (x < 0 || x >= N) continue;
+    const t = map[y][x], a = (sx - OX) / (TW / 2), b = (sy + elev(t) - OY) / (TH / 2);
+    if (Math.floor((a + b) / 2) === x && Math.floor((b - a) / 2) === y) return t;
+  }
+  return null;
+}
+cv.addEventListener("pointermove", e => { const t = pick(e); if (t !== hover){ hover = t; draw(); showTileInfo(); } });
+cv.addEventListener("pointerleave", () => { hover = null; draw(); showTileInfo(); });
+cv.addEventListener("click", e => { const t = pick(e); if (!t) return; selected = t; tab = "build"; draw(); renderAll(true); showTileInfo(); });
+
+function showTileInfo(){
+  const el = $("#tileinfo"), t = hover || selected;
+  if (!t){ el.hidden = true; return; }
+  const info = [`<b>${t.hall ? "Commons hall" : TER[t.t].n}</b>${t.e ? ` · height ${t.e}` : ""}`];
+  if (t.hall) info.push(`Shared stores and the Skysail (${parts}/${PROJECT_PARTS}). Click to give or take.`);
+  else if (t.b){
+    const p = players[t.b.owner];
+    info.push(`${B[t.b.type].n} · <span style="color:${p.color}">${p.name}</span>${t.b.damaged > tick ? " · storm damage" : !t.b.staffed ? " · not enough settlers" : t.b.idle ? " · waiting for inputs" : ""}`);
+    const s = synergy(t.x, t.y, t.b.owner); if (s) info.push(`Synergy +${Math.round(s * 100)}%`);
+  } else if (started && inClaim(you(), t.x, t.y)) info.push("Free · in your area");
+  el.innerHTML = info.join("<br>"); el.hidden = false;
+}
+
+/* ================= UI ================= */
+const fmt = v => Math.floor(v + 1e-6).toLocaleString();
+let pressing = false, lastPanel = 0;
+$("#side").addEventListener("pointerdown", () => pressing = true);
+window.addEventListener("pointerup", () => setTimeout(() => pressing = false, 50));
+
+function renderAll(force){
+  renderTop(); renderRes(); renderBanners(); renderGoal(); renderRanks(); renderLog();
+  const now = performance.now();
+  if (force || (!pressing && now - lastPanel > 450)){ renderDock(); renderPanel(); lastPanel = now; }
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+}
+function renderTop(){
+  $("#season").textContent = seasonNo();
+  $("#timebar").style.width = (tick / END_TICK * 100) + "%";
+  $("#health").textContent = Math.round(health);
+  const hb = $("#healthbar"); hb.style.width = health + "%"; hb.dataset.state = health >= HEALTH_TARGET ? "good" : health >= 40 ? "warn" : "bad";
+  $("#proj").textContent = parts;
+  $("#projbar").style.width = (parts / PROJECT_PARTS * 100) + "%";
+  const fl = valleyFloor();
+  $("#floor").textContent = Math.round(fl * 100) + "%";
+  const fb = $("#floorbar"); fb.style.width = (fl * 100) + "%"; fb.dataset.state = fl >= FLOOR_TARGET ? "good" : fl >= .5 ? "warn" : "bad";
+  $("#seasonname").textContent = seasonName();
+  $("#weather").textContent = weather;
+  document.querySelectorAll(".speed button").forEach(b => { b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === speed)); b.disabled = phase !== "run"; });
+}
+const RES_BAR = ["crops", "fish", "meals", "water", "energy", "timber", "ore", "alloy", "bio", "knowledge", "glass", "chips", "seeds", "parts"];
+function renderRes(){
+  const p = you();
+  const chip = (k, v, title, extra) => `<span class="res" title="${title}">${icon(k)}<b class="num">${v}</b>${extra || ""}</span>`;
+  const rate = k => { const r = (p.rate[k] || 0) * TICKS_PER_SEASON; return Math.abs(r) >= 1 ? `<small class="num ${r > 0 ? "up" : "down"}">${r > 0 ? "+" : ""}${Math.round(r)}</small>` : ""; };
+  $("#resbar").innerHTML =
+    chip("settlers", `${freeSettlers(p)}/${p.settlers}`, "Free settlers / total settlers") +
+    chip("credits", p.credits.toFixed(1), "Restoration Credits") +
+    `<span class="sep"></span>` +
+    RES_BAR.filter(k => TIER(k) < 2 || p.stock[k] >= 1 || p.techs.size).map(k => chip(k, fmt(p.stock[k]), `${RN(k)} (change per season)`, rate(k))).join("") +
+    `<button class="hallbtn" data-act="hall">Commons hall</button>`;
+}
+function renderBanners(){
+  const el = $("#banners");
+  el.innerHTML = banners.map(b => {
+    const left = Math.max(0, b.until - tick), total = Math.max(1, b.until - b.from);
+    let actions = "";
+    if (b.kind === "aid") actions = `<div class="bact"><button data-act="aid" data-k="${b.id}" data-v="food">Send food</button><button data-act="aid" data-k="${b.id}" data-v="water">Send 5 water</button><button data-act="aid" data-k="${b.id}" data-v="timber">Send 5 timber</button></div>`;
+    if (b.kind === "offer") actions = `<div class="bact"><button data-act="offer" data-k="${b.id}" ${you().stock[b.want] >= b.wq ? "" : "disabled"}>Accept</button><button data-act="dismiss" data-k="${b.id}">Ignore</button></div>`;
+    return `<div class="banner ${b.kind}"><b>${b.title}</b><p>${b.text}</p>${actions}<div class="btime"><i style="width:${left / total * 100}%"></i></div></div>`;
+  }).join("");
+}
+function renderGoal(){
+  const p = you(), G = GOALS[p.goal], v = p[G.key], pct = Math.min(100, v / G.target * 100);
+  const lv = Object.keys(BRANCHES).map(k => `<span class="chip">${BRANCHES[k]} · Lv ${p.lvl[k]}</span>`).join("");
+  const nv = needsPreview(p), need = (lbl, r, have, n) => `<div class="need"><span>${lbl}</span><div class="bar small" data-state="${r >= 1 ? "good" : r >= .5 ? "warn" : "bad"}"><i style="width:${r * 100}%"></i></div><span class="num">${fmt(have)}/${n}</span></div>`;
+  $("#goalcard").innerHTML = `<h3>Your goal: ${G.n}</h3><p>${G.d}</p>
+    <div class="bar small"><i style="width:${pct}%"></i></div><p class="num">${fmt(v)} / ${G.target}</p>
+    <h3 class="mt">Needs at season end</h3>
+    ${need("Food", nv.food, foodStock(p), nv.n.food)}${need("Water", nv.water, p.stock.water, nv.n.water)}${need("Energy", nv.energy, p.stock.energy, nv.n.energy)}
+    <p class="muted small">Meet 90% of needs to gain 2 settlers, 60% to gain 1. Meals count as 3 food.</p>
+    <div class="chips">${lv}</div>`;
+}
+function renderRanks(){
+  const rows = players.map(p => ({ p, s: score(p) })).sort((a, b) => b.s.total - a.s.total);
+  $("#ranks").innerHTML = rows.map(({ p, s }, i) => `<li class="${p.bot ? "" : "me"}"><span class="rk">${i + 1}</span><span class="dot" style="background:${p.color}"></span><span class="nm">${p.name}<small>${GOALS[p.goal].n} ${Math.round(s.gp * 100)}% · needs ${Math.round(s.nd * 100)}%</small></span><span class="sc num">${Math.round(s.total)}</span></li>`).join("");
+}
+function renderLog(){
+  $("#log").innerHTML = logs.slice(0, 7).map(l => `<li><span class="when">S${l.season}</span>${l.color ? `<span class="dot" style="background:${l.color}"></span>` : ""}<span>${l.text}</span></li>`).join("");
+}
+function renderDock(){
+  const p = you(), el = $("#dock");
+  if (ended){ el.innerHTML = `<p class="dockt">Session over</p>`; return; }
+  if (phase === "plan"){
+    const voted = p.vote != null;
+    el.innerHTML = `<p class="dockt">${seasonName()} · season ${seasonNo()} of ${SEASONS} · <span class="plan">Planning</span></p>
+      <ol class="steps">
+        <li class="${voted ? "done" : ""}"><button class="link" data-act="tab" data-k="council">Vote in the Council</button><span>${voted ? (p.vote === "none" ? "Keep rules" : RULES[p.vote].n) : "Not voted"}</span></li>
+        <li class="${p.researchedThisSeason ? "done" : ""}"><button class="link" data-act="tab" data-k="research">Pick one research</button><span>${p.researchedThisSeason ? "Done" : "Optional"}</span></li>
+        <li class="${p.builtThisSeason >= BUILDS_PER_SEASON ? "done" : ""}"><button class="link" data-act="tab" data-k="build">Place up to ${BUILDS_PER_SEASON} builds</button><span>${p.builtThisSeason}/${BUILDS_PER_SEASON} · ${freeSettlers(p)} settlers free</span></li>
+      </ol>
+      <button class="primary big wide" data-act="begin">Begin ${seasonName().toLowerCase()}</button>`;
+  } else {
+    el.innerHTML = `<p class="dockt">${seasonName()} · season ${seasonNo()} of ${SEASONS} · <span class="run">Running</span></p>
+      <div class="bar"><i style="width:${(tick % TICKS_PER_SEASON) / TICKS_PER_SEASON * 100}%"></i></div>
+      <p class="muted">The season plays out. Answer banners on the map as they appear. Next planning phase in ${TICKS_PER_SEASON - (tick % TICKS_PER_SEASON)} ticks.</p>`;
+  }
+}
+function commonsPanel(){
+  const p = you(), goods = ORDER.filter(k => k !== "parts" && p.stock[k] >= 1), com = ORDER.filter(k => commons[k] >= 1);
+  if (!goods.includes(shareGood)) shareGood = goods[0] || "crops";
+  return `<div class="tilehead"><b>Commons hall</b><span>Skysail ${parts}/${PROJECT_PARTS}</span></div>
+    <p class="muted">Anyone can give to the shared stores, and gifts raise your score toward the shared goal. Skysail parts are delivered here automatically at the end of each season.</p>
+    <section class="share"><h4>Give</h4>
+      <div class="formrow"><label for="sg">Good</label><select id="sg">${goods.map(k => `<option value="${k}" ${k === shareGood ? "selected" : ""}>${RN(k)} (${fmt(p.stock[k])})</option>`).join("") || `<option>Nothing to give yet</option>`}</select></div>
+      <div class="formrow"><span class="lbl">Amount</span><div class="seg">${[5, 10, 25].map(a => `<button data-act="amt" data-k="${a}" aria-pressed="${a === shareAmt}">${a}</button>`).join("")}</div></div>
+      <button class="primary" data-act="give" ${goods.length ? "" : "disabled"}>Give ${shareAmt} to the commons</button></section>
+    <section class="share"><h4>Take</h4><p class="muted">You can take ${Math.max(0, quota() - p.taken)} more this season. The Council sets this limit.</p>
+      ${com.length ? `<ul class="commons">${com.map(k => `<li><span>${icon(k)} ${RN(k)}</span><span class="num">${fmt(commons[k])}</span><button data-act="take" data-k="${k}" ${p.taken >= quota() ? "disabled" : ""}>Take 5</button></li>`).join("")}</ul>` : `<p class="hint">The shared stores are empty right now.</p>`}</section>`;
+}
+function renderPanel(){
+  const el = $("#panel"), p = you();
+  if (tab === "build"){
+    if (!selected){ el.innerHTML = `<p class="hint">Pick a tile on the map. During planning you can build on free tiles within 2 tiles of your home flag or your buildings; they are outlined in white. Click the hall in the middle of the valley for the commons.</p>`; return; }
+    const t = selected;
+    if (t.hall){ el.innerHTML = commonsPanel(); return; }
+    const head = `<div class="tilehead"><b>${TER[t.t].n}</b><span>Tile ${t.x + 1}, ${t.y + 1} · height ${t.e}</span></div>`;
+    if (t.b){
+      const d = B[t.b.type], o = players[t.b.owner];
+      el.innerHTML = head + `<div class="bcard"><h4>${d.n}</h4><p>Run by <b style="color:${o.color}">${o.name}</b>. ${t.b.damaged > tick ? "Damaged by the storm." : !t.b.staffed ? "Not enough settlers to run it." : t.b.idle ? "Waiting for inputs." : "Running."}</p><p class="muted">${recipe(d)}</p></div>`;
+      return;
+    }
+    const opts = Object.keys(B).filter(k => B[k].on.includes(t.t));
+    if (!opts.length){ el.innerHTML = head + `<p class="hint">Nothing can be built on this terrain.</p>`; return; }
+    el.innerHTML = head + opts.map(k => {
+      const d = B[k], why = buildCheck(p, t.x, t.y, k);
+      return `<div class="bcard"><div class="row"><h4>${d.n}</h4><button data-act="build" data-k="${k}" ${why ? "disabled" : ""}>Build</button></div>
+        <p class="muted">${recipe(d)}</p><p class="cost">Costs ${costText(bcost(k))} · ${d.crew ? `${d.crew} settler${d.crew > 1 ? "s" : ""}` : "no settlers"}</p>${why ? `<p class="why">${why}</p>` : ""}</div>`;
+    }).join("");
+  } else if (tab === "research"){
+    el.innerHTML = `<p class="hint">One research per season, during planning. Once anyone researches a technology, it costs everyone else 50% less.</p>` + Object.keys(BRANCHES).map(br => `
+      <section class="branch"><h4>${BRANCHES[br]} <span class="chip">Lv ${p.lvl[br]}</span></h4>${Object.keys(TECH).filter(id => TECH[id].br === br).map(id => {
+        const T = TECH[id], why = researchCheck(p, id), has = p.techs.has(id), c = techCost(p, id), fb = firstBy[id];
+        return `<div class="tech ${has ? "done" : ""}"><div class="row"><b>${T.n}</b><span class="tier">Tier ${T.tier}</span></div><p class="muted">${T.d}</p>
+          ${has ? `<p class="okay">Researched</p>` : `<p class="cost">Costs ${costText(c)}${fb != null && fb !== 0 ? ` <span class="disc">50% off, first by ${players[fb].name}</span>` : ""}</p>
+          <div class="row"><span class="why">${why || ""}</span><button data-act="research" data-k="${id}" ${why ? "disabled" : ""}>Research</button></div>`}</div>`;
+      }).join("")}</section>`).join("");
+  } else if (tab === "council"){
+    const forecast = (() => { const h = healthHist, prev = h.length > 1 ? h[h.length - 2] : h[0], last = h[h.length - 1];
+      return Math.max(0, Math.min(100, last + (last - prev) * (SEASONS - seasonNo() + 1))); })();
+    let html = `<section class="share"><h4>Valley Council · season ${seasonNo()}</h4>`;
+    if (phase === "plan" && council){
+      html += `<p class="muted">Vote on one commons rule for this season. Computer players have voted; the result is counted when the season begins.</p><ul class="votes">` +
+        council.options.concat(["none"]).map(id => `<li><div><b>${id === "none" ? "Keep current rules" : RULES[id].n}</b>${id === "none" ? "" : `<p class="muted">${RULES[id].d}</p>`}</div><button data-act="vote" data-k="${id}" aria-pressed="${p.vote === id}">${p.vote === id ? "Voted" : "Vote"}</button></li>`).join("") + `</ul>`;
+    } else {
+      html += `<p>${activeRule ? `In force: <b>${RULES[activeRule].n}</b>. ${RULES[activeRule].d}` : "No new rule this season."}</p>` +
+        (council && council.tally ? `<p class="muted">Votes: ${Object.keys(council.tally).map(k => `${k === "none" ? "keep rules" : RULES[k].n} ${council.tally[k]}`).join(" · ")}</p>` : "");
+    }
+    html += `</section><section class="share"><h4>Future seat forecast</h4><p>At last season's pace, Valley Health ends near <b class="num">${Math.round(forecast)}</b>. The target is ${HEALTH_TARGET}.</p></section>
+      <section class="share"><h4>Public works</h4><p class="muted">Restoration Credits come only from healing the valley: rewilding, sky gardens, and leaving mountains and hills near your home unmined. You have <b class="num">${p.credits.toFixed(1)}</b>.</p>
+      <ul class="votes">${Object.keys(WORKS).map(id => `<li><div><b>${WORKS[id].n}</b><p class="muted">${WORKS[id].d}. Costs ${WORKS[id].cost} credits.</p></div><button data-act="work" data-k="${id}" ${p.credits >= WORKS[id].cost ? "" : "disabled"}>Fund</button></li>`).join("")}</ul></section>`;
+    el.innerHTML = html;
+  }
+}
+function recipe(d){
+  if (d.inp) return `Turns ${costText(d.inp)} into ${costText(d.out)} per tick`;
+  if (d.out) return `Makes ${costText(d.out)} per tick${d.wx && d.wx !== "muscle" ? ", depending on weather and season" : ""}${d.p >= .003 ? ". Puts pressure on the valley" : ""}`;
+  return d.note || "";
+}
+
+document.addEventListener("click", e => {
+  const btn = e.target.closest("[data-act]"); if (!btn || btn.disabled) return;
+  const act = btn.dataset.act, k = btn.dataset.k, p = you();
+  if (act === "build"){ if (build(p, selected.x, selected.y, k)) toast(`Built ${B[k].n}.`); }
+  else if (act === "research"){ research(p, k); }
+  else if (act === "vote"){ if (phase === "plan") p.vote = k; }
+  else if (act === "work"){ if (publicWork(p, k)) toast(`Funded: ${WORKS[k].n}.`); }
+  else if (act === "amt"){ shareAmt = Number(k); }
+  else if (act === "give"){ const n = giveCommons(p, shareGood, shareAmt); if (n) toast(`Gave ${n} ${RN(shareGood).toLowerCase()} to the commons.`); }
+  else if (act === "take"){ const n = takeCommons(p, k, 5); if (n) toast(`Took ${n} ${RN(k).toLowerCase()} from the commons.`); }
+  else if (act === "hall"){ selected = map[HALL[1]][HALL[0]]; tab = "build"; }
+  else if (act === "aid"){ const b = banners.find(b => b.id === Number(k)); if (b) sendAid(b, btn.dataset.v); }
+  else if (act === "offer"){ const b = banners.find(b => b.id === Number(k)); if (b) acceptOffer(b); }
+  else if (act === "dismiss"){ dropBanner(Number(k)); }
+  else if (act === "tab"){ tab = k; }
+  else if (act === "speed"){ speed = Number(k); }
+  else if (act === "begin"){ beginSeason(); }
+  else if (act === "start"){ started = true; $("#overlay").hidden = true; tab = "council"; }
+  else if (act === "again"){ newGame(); return; }
+  draw(); renderAll(true); showTileInfo();
+});
+document.addEventListener("change", e => { if (e.target.id === "sg"){ shareGood = e.target.value; renderAll(true); } });
+
+function showIntro(){
+  const p = you(), G = GOALS[p.goal];
+  $("#dialog").innerHTML = `<p class="eyebrow">Playable prototype v0.4 · computer players stand in for real ones</p>
+    <h2>Restore the valley together</h2>
+    <p>You lead one of six settlements in a damaged valley, powered only by sun, wind, water and muscle. The game runs in 12 seasons.</p>
+    <ul>
+      <li><b>Each season starts paused for planning.</b> Vote in the Valley Council, pick one research, and place up to ${BUILDS_PER_SEASON} buildings. Then begin the season and watch it play out.</li>
+      <li><b>Settlers run your buildings.</b> Meet your people's food, water and energy needs to gain more.</li>
+      <li><b>Shared goal, the Doughnut:</b> needs met (${Math.round(FLOOR_TARGET * 100)}% on average), Valley Health ${HEALTH_TARGET}+, and the Skysail finished (${PROJECT_PARTS} parts). If any part fails, everyone fails.</li>
+      <li><b>Your goal:</b> ${G.n}. ${G.d}.</li>
+      <li><b>During a season</b>, banners appear when a neighbor is hit by a crisis or offers a trade. Answer them if you can.</li>
+    </ul>
+    <p class="muted">Start near your orange flag with a Library, a Farm and a Forestry. A full session takes about 6 minutes of running time plus your planning.</p>
+    <div class="chips">${Object.keys(BRANCHES).map(k => `<span class="chip">${BRANCHES[k]} · Lv ${p.lvl[k]}</span>`).join("")}<span class="chip">Sessions played: ${profile.sessions}</span></div>
+    <button class="primary big" data-act="start">Start planning</button>`;
+  $("#overlay").hidden = false;
+}
+function endGame(ok, why){
+  if (ended) return; ended = true; phase = "over";
+  const rows = players.map(p => ({ p, s: score(p) })).sort((a, b) => b.s.total - a.s.total);
+  const me = you(), before = { ...me.lvl };
+  Object.keys(BRANCHES).forEach(k => profile.xp[k] += Math.round(me.spend[k] * (ok ? 1 : .5)));
+  profile.sessions++; saveProfile(profile);
+  const after = Object.fromEntries(Object.keys(BRANCHES).map(k => [k, lvlOf(profile.xp[k])]));
+  $("#dialog").innerHTML = `<p class="eyebrow">Session over</p><h2>${ok ? "The valley is restored" : "The shared goal failed"}</h2><p>${why}${ok ? "" : " Everyone fails together, and specialization gains are halved."}</p>
+    <ol class="final">${rows.map(({ p, s }, i) => `<li class="${p.bot ? "" : "me"}"><span class="rk">${i + 1}</span><span class="dot" style="background:${p.color}"></span><span class="nm">${p.name}</span><span class="num">${Math.round(s.total)}</span></li>`).join("")}</ol>
+    <h3>Your profile</h3><div class="chips">${Object.keys(BRANCHES).map(k => `<span class="chip">${BRANCHES[k]} · +${Math.round(me.spend[k] * (ok ? 1 : .5))} XP · Lv ${before[k]}${after[k] > before[k] ? ` → ${after[k]}` : ""}</span>`).join("")}</div>
+    <button class="primary big" data-act="again">Play another session</button>`;
+  $("#overlay").hidden = false;
+  renderAll(true);
+}
+
+/* ================= loop ================= */
+let acc = 0, lastT = performance.now();
+function loop(now){
+  const dt = Math.min(.5, (now - lastT) / 1000); lastT = now;
+  if (started && !ended && phase === "run" && speed > 0){
+    acc += dt * speed;
+    let stepped = false;
+    while (acc >= 1 && !ended && phase === "run"){ acc -= 1; step(); stepped = true; }
+    if (stepped){ draw(); renderAll(phase === "plan"); }
+  } else acc = 0;
+  requestAnimationFrame(loop);
+}
+newGame();
+requestAnimationFrame(loop);
+})();
